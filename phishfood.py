@@ -145,7 +145,7 @@ class PhishFood:
         url = f"https://haveibeenpwned.com/api/v3/breachedaccount/{domain}"
         headers = {
             "hibp-api-key": hibp_api_key,
-            "User-Agent": "PhishFood",
+            "User-Agent": random.choice(user_agent_list),
             "Accept": "application/json"
         }
 
