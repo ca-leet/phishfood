@@ -219,7 +219,7 @@ class PhishFood:
 
             if not no_verify:
                 logging.info(f"Verifying emails for {domain}...")
-                tenant_name = domain.split('.')[0]  # Adjust this logic based on your tenant naming convention
+                tenant_name = domain.split('.')[0]  # Adjust this logic
                 verified_emails = self.validate_emails_concurrently(harvested_emails, tenant_name)
                 self.save_emails(verified_emails, domain)
             else:
