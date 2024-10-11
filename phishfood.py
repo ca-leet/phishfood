@@ -42,6 +42,7 @@ class PhishFood:
         parser.add_argument("-c", "--company", required=True, help="Target company name")
         parser.add_argument("-f", "--email_format", required=True, help="Email format (e.g., {f}.{last}@domain.com)")
         parser.add_argument("-d", "--domains", required=True, nargs='+', help="Target domains (e.g., example.com example2.com)")
+        parser.add_argument("--no-verify", action='store_true', help="Gather emails without verifying them using the OneDrive method")
         args = parser.parse_args()
         return vars(args)
 
@@ -50,7 +51,7 @@ class PhishFood:
         emails.extend(self.linkedin_enum(company, domain))
         emails.extend(self.intelx_search(domain))
         emails.extend(self.dehashed_search(domain))
-        emails.extend(self.maildb_search(domain))
+        emails.extend(self.hibp_search(domain))
         return emails
 
     def linkedin_enum(self, company: str, domain: str) -> List[Dict[str, str]]:
@@ -126,14 +127,45 @@ class PhishFood:
         email_format = self.get_user_input().get('email_format')
         return email_format.format(f=first[0], first=first, l=last[0], last=last, domain=domain)
 
-    def save_emails(self, emails: List[Dict[str, str]], domain: str):
-        filename = f"existant_users_{domain}.csv"
-        with open(filename, 'w', newline='') as csvfile:
-            writer = csv.writer(csvfile)
-            writer.writerow(['Email', 'Source'])
-            for entry in emails:
-                writer.writerow([entry['email'], entry['source']])
-        logging.info(f"Emails saved to {filename}")
+    def hibp_search(self, domain: str) -> List[Dict[str, str]]:
+        """
+        Searches Have I Been Pwned (HIBP) for emails associated with the domain.
+
+        Args:
+            domain (str): The domain to search for.
+
+        Returns:
+            List[Dict[str, str]]: A list of emails found in breaches.
+        """
+        hibp_api_key = self.api_keys.get("hibp_api_key")
+        if not hibp_api_key:
+            logging.error("HIBP API key is missing from the config.json file.")
+            return []
+
+        url = f"https://haveibeenpwned.com/api/v3/breachedaccount/{domain}"
+        headers = {
+            "hibp-api-key": hibp_api_key,
+            "User-Agent": "PhishFood",
+            "Accept": "application/json"
+        }
+
+        try:
+            response = requests.get(url, headers=headers)
+            if response.status_code == 200:
+                data = response.json()
+                emails = [{"email": entry['Email'], "source": "HIBP"} for entry in data]
+                logging.info(f"HIBP: Found {len(emails)} emails for domain {domain}.")
+                return emails
+            elif response.status_code == 404:
+                logging.info(f"No breached accounts found for domain {domain}.")
+            elif response.status_code == 401:
+                logging.error("Unauthorized: Check your Have I Been Pwned API credentials.")
+            else:
+                logging.error(f"HIBP API returned status code {response.status_code}")
+            return []
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Error fetching emails from HIBP: {e}")
+            return []
 
     def validate_emails_concurrently(self, emails: List[Dict[str, str]], tenant_name: str) -> List[Dict[str, str]]:
         with ThreadPoolExecutor(max_workers=10) as executor:
@@ -164,32 +196,36 @@ class PhishFood:
 
         return None
 
-    def run(self):
-        print("PhishFood - OSINT Email Harvester and Domain Enumerator")
-        print("Disclaimer: This tool is for ethical and authorized use only.")
-        confirmation = input("Do you have authorization to use this tool? (y/n): ")
-        if confirmation.lower() != 'y':
-            print("Authorization not confirmed. Exiting.")
-            return
+    def save_emails(self, emails: List[Dict[str, str]], domain: str):
+        filename = f"existant_users_{domain}.csv"
+        with open(filename, 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(['Email', 'Source'])
+            for entry in emails:
+                writer.writerow([entry['email'], entry['source']])
+        logging.info(f"Emails saved to {filename}")
 
+    def run(self):
         user_input = self.get_user_input()
         company = user_input['company']
         email_format = user_input['email_format']
         domains = user_input['domains']
+        no_verify = user_input['no_verify']
 
         for domain in domains:
-            tenant_name = domain.split('.')[0]
-            print(f"Harvesting emails for {company} ({domain})...")
+            logging.info(f"Harvesting emails for {company} ({domain})...")
             harvested_emails = self.harvest_emails(company, domain)
-            print(f"Harvested {len(harvested_emails)} email addresses.")
+            logging.info(f"Harvested {len(harvested_emails)} email addresses.")
 
-            print("Validating email addresses...")
-            valid_emails = self.validate_emails_concurrently(harvested_emails, tenant_name)
-            print(f"Total valid email addresses: {len(valid_emails)}")
+            if not no_verify:
+                logging.info(f"Verifying emails for {domain}...")
+                tenant_name = domain.split('.')[0]  # Adjust this logic based on your tenant naming convention
+                verified_emails = self.validate_emails_concurrently(harvested_emails, tenant_name)
+                self.save_emails(verified_emails, domain)
+            else:
+                self.save_emails(harvested_emails, domain)
 
-            self.save_emails(valid_emails, domain)
-
-        print("Operation completed.")
+            logging.info(f"Completed operations for {domain}.")
 
 if __name__ == "__main__":
     harvester = PhishFood()
